@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import '../glass/glass_quality.dart';
 import '../glass/liquid_glass_widget.dart';
 
-/// 演示首页：彩色背景上的单个液态玻璃卡片。
+/// 演示首页：锐利内容上的液态玻璃卡片。
+///
+/// 背景特意用「边缘锐利的色块 + 文字 + 细分割线」，
+/// 这样玻璃的模糊、折射和边缘高光才看得见（软渐变光斑只会显得更软）。
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.quality});
 
@@ -21,11 +24,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       body: Stack(
         children: [
-          // 背景：渐变 + 彩色圆形，便于观察折射和色散
-          RepaintBoundary(
-            key: _bgKey,
-            child: const _ColorfulBackground(),
-          ),
+          RepaintBoundary(key: _bgKey, child: const _SharpBackground()),
           // 玻璃卡片
           SafeArea(
             child: Center(
@@ -33,8 +32,8 @@ class _HomePageState extends State<HomePage> {
                 captureKey: _bgKey,
                 quality: widget.quality,
                 cornerRadius: 28,
-                width: 300,
-                height: 200,
+                width: 320,
+                height: 210,
                 onTap: () {},
                 child: const Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -49,12 +48,13 @@ class _HomePageState extends State<HomePage> {
                         decoration: TextDecoration.none,
                       ),
                     ),
-                    SizedBox(height: 8),
+                    SizedBox(height: 10),
                     Text(
-                      '真实折射 · 色散 · 边缘高光\n点击查看触摸光照',
+                      '磨砂模糊 · 透镜折射 · RGB 色散\n点击卡片，边缘高光跟随手指',
                       style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 15,
+                        color: Colors.white,
+                        fontSize: 14,
+                        height: 1.5,
                         decoration: TextDecoration.none,
                       ),
                     ),
@@ -69,61 +69,85 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-/// 彩色背景：多色渐变 + 装饰圆形，让玻璃折射效果清晰可见。
-class _ColorfulBackground extends StatelessWidget {
-  const _ColorfulBackground();
+/// 锐利背景：网格色块 + 标题文字 + 细线，模拟真实界面内容。
+class _SharpBackground extends StatelessWidget {
+  const _SharpBackground();
 
   @override
   Widget build(BuildContext context) {
+    final items = [
+      const _SharpRow(color: Color(0xFFEF4444), title: '快讯 · 行业动态'),
+      const _SharpRow(color: Color(0xFF3B82F6), title: '科技 · 新机发布'),
+      const _SharpRow(color: Color(0xFF10B981), title: '生活 · 假期随手拍'),
+      const _SharpRow(color: Color(0xFFF59E0B), title: '财经 · 市场观察'),
+      const _SharpRow(color: Color(0xFF8B5CF6), title: 'AI · 模型进展'),
+      const _SharpRow(color: Color(0xFFEC4899), title: '摄影 · 人像技巧'),
+    ];
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color(0xFF2E1065),
-            Color(0xFF4C1D95),
-            Color(0xFF831843),
-            Color(0xFF1E3A8A),
-          ],
-        ),
-      ),
-      child: Stack(
+      color: const Color(0xFFF1F5F9),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Positioned(
-            top: 80,
-            left: 40,
-            child: _blob(140, const Color(0xFFF472B6)),
-          ),
-          Positioned(
-            top: 300,
-            right: 30,
-            child: _blob(180, const Color(0xFF38BDF8)),
-          ),
-          Positioned(
-            bottom: 120,
-            left: 60,
-            child: _blob(160, const Color(0xFFFBBF24)),
-          ),
-          Positioned(
-            bottom: 280,
-            right: 100,
-            child: _blob(100, const Color(0xFF34D399)),
-          ),
+          const SizedBox(height: 80),
+          for (final w in [
+            ...items,
+            const Divider(height: 1, thickness: 1, color: Color(0xFFCBD5E0)),
+          ]) ...[w],
         ],
       ),
     );
   }
+}
 
-  Widget _blob(double size, Color color) {
+class _SharpRow extends StatelessWidget {
+  const _SharpRow({required this.color, required this.title});
+  final Color color;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [color.withOpacity(0.9), color.withOpacity(0.1)],
-        ),
+      height: 110,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      child: Row(
+        children: [
+          // 锐利的纯色小方块（非软渐变）
+          Container(
+            width: 80,
+            height: 80,
+            color: color,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  height: 8,
+                  color: const Color(0xFF94A3B8),
+                  width: 160,
+                ),
+                const SizedBox(height: 5),
+                Container(
+                  height: 8,
+                  color: const Color(0xFFCBD5E1),
+                  width: 100,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
