@@ -8,19 +8,16 @@ import 'glass_shader_program.dart';
 
 /// 液态玻璃核心组件。
 ///
-/// 通过捕获玻璃下方的背景内容（[RepaintBoundary] + [toImage]），
-/// 交给 GPU 片元着色器实现折射、色散、Fresnel 边缘高光和触摸光照。
+/// 通过 [RepaintBoundary] + [RenderRepaintBoundary.toImage] 捕获玻璃正下方的背景，
+/// 片元着色器按玻璃在背景中的真实位置采样，实现折射、磨砂、边缘高光。
 ///
 /// 用法：
 /// ```dart
 /// final bgKey = GlobalKey();
-/// // 背景包 RepaintBoundary(key: bgKey)
-/// GlassWidget(
-///   captureKey: bgKey,
-///   cornerRadius: 24,
-///   quality: GlassQuality.full,
-///   child: Text('玻璃上的内容'),
-/// )
+/// Stack(children: [
+///   RepaintBoundary(key: bgKey, child: MyBackground()),
+///   GlassWidget(captureKey: bgKey, child: Text('玻璃上的内容')),
+/// ]);
 /// ```
 class GlassWidget extends StatefulWidget {
   const GlassWidget({
@@ -38,43 +35,27 @@ class GlassWidget extends StatefulWidget {
     this.borderColor,
   });
 
-  /// 背景 [RepaintBoundary] 的 key，用于捕获玻璃下方内容。
   final GlobalKey captureKey;
-
-  /// 玻璃上方显示的子内容。
   final Widget? child;
-
-  /// 圆角半径。
   final double cornerRadius;
-
-  /// 折射高度场厚度（控制透镜边缘过渡宽度）。
   final double refractionHeight;
-
-  /// 折射强度（0 = 无折射，1 = 标准，>1 = 夸张）。
   final double refractionAmount;
-
-  /// 渲染质量分级。
   final GlassQuality quality;
-
-  /// 显式宽度/高度；为 null 时按子内容或父约束自适应。
   final double? width;
   final double? height;
-
-  /// 内边距。
   final EdgeInsets padding;
-
-  /// 点击回调（同时用于触发触摸光照）。
   final VoidCallback? onTap;
-
-  /// 边框颜色（minimal 质量使用）。
   final Color? borderColor;
 
   @override
   State<GlassWidget> createState() => _GlassWidgetState();
 }
 
-class _GlassWidgetState extends State<GlassWidget> with SingleTickerProviderStateMixin {
+class _GlassWidgetState extends State<GlassWidget>
+    with SingleTickerProviderStateMixin {
   ui.Image? _backgroundImage;
+  Offset _glassOrigin = Offset.zero; // 玻璃左上角在背景坐标系中的位置
+  Size _bgSize = Size.zero;           // 被捕获背景的逻辑尺寸
   Offset _touchPos = const Offset(-1, -1);
   late AnimationController _controller;
   bool _capturing = false;
@@ -87,7 +68,6 @@ class _GlassWidgetState extends State<GlassWidget> with SingleTickerProviderStat
       duration: const Duration(seconds: 1),
     )..repeat();
     _controller.addListener(_scheduleCapture);
-    // 首帧后捕获背景
     WidgetsBinding.instance.addPostFrameCallback((_) => _captureBackground());
   }
 
@@ -98,30 +78,40 @@ class _GlassWidgetState extends State<GlassWidget> with SingleTickerProviderStat
     super.dispose();
   }
 
-  /// 从 [RepaintBoundary] 捕获背景为 [ui.Image]。
+  /// 捕获背景，并同时记录玻璃在背景坐标系中的位置与背景尺寸。
   Future<void> _captureBackground() async {
     if (_capturing) return;
     final ctx = widget.captureKey.currentContext;
     if (ctx == null) return;
     final boundary = ctx.findRenderObject();
     if (boundary is! RenderRepaintBoundary) return;
+    final glassObj = context.findRenderObject();
+    if (glassObj is! RenderBox) return;
     _capturing = true;
     try {
-      // pixelRatio 用 1 保持逻辑像素坐标一致
       final image = await boundary.toImage(pixelRatio: 1);
-      final old = _backgroundImage;
-      _backgroundImage = image;
-      old?.dispose();
-      if (mounted) setState(() {});
+      // 玻璃左上角在背景坐标系（逻辑像素）中的位置
+      final globalTopLeft = glassObj.localToGlobal(Offset.zero);
+      final localOrigin = boundary.globalToLocal(globalTopLeft);
+      if (mounted) {
+        setState(() {
+          final old = _backgroundImage;
+          _backgroundImage = image;
+          old?.dispose();
+          _glassOrigin = localOrigin;
+          _bgSize = boundary.size;
+        });
+      } else {
+        image.dispose();
+      }
     } catch (_) {
-      // 捕获失败（可能边界尚未布局），下一帧重试
+      // 捕获失败，下一帧重试
     } finally {
       _capturing = false;
     }
   }
 
   void _scheduleCapture() {
-    // 动画驱动定期刷新背景（背景可能在滚动/变化）
     if (_controller.value < 0.02) _captureBackground();
   }
 
@@ -138,22 +128,24 @@ class _GlassWidgetState extends State<GlassWidget> with SingleTickerProviderStat
   @override
   Widget build(BuildContext context) {
     final glass = _buildGlass();
-    return GestureDetector(
+    final g = GestureDetector(
       onTapDown: widget.onTap != null ? _handleTapDown : null,
-      onTapUp: widget.onTap != null ? (_) { _handleTapEnd(); widget.onTap!(); } : null,
-      onTapCancel: widget.onTap != null ? () => _handleTapEnd() : null,
-      child: widget.width != null || widget.height != null
-          ? SizedBox(
-              width: widget.width,
-              height: widget.height,
-              child: glass,
-            )
-          : glass,
+      onTapUp: widget.onTap != null
+          ? (_) {
+              _handleTapEnd();
+              widget.onTap!();
+            }
+          : null,
+      onTapCancel: widget.onTap != null ? _handleTapEnd : null,
+      child: glass,
     );
+    if (widget.width != null || widget.height != null) {
+      return SizedBox(width: widget.width, height: widget.height, child: g);
+    }
+    return g;
   }
 
   Widget _buildGlass() {
-    // minimal 质量或着色器未就绪：用内置 BackdropFilter 兜底
     if (widget.quality == GlassQuality.minimal ||
         !GlassShaderProgram.instance.isLoaded ||
         _backgroundImage == null) {
@@ -168,26 +160,25 @@ class _GlassWidgetState extends State<GlassWidget> with SingleTickerProviderStat
         refractionAmount: widget.refractionAmount,
         touchPos: _touchPos,
         time: _controller.value,
+        glassOrigin: _glassOrigin,
+        bgSize: _bgSize,
       ),
-      child: Padding(
-        padding: widget.padding,
-        child: widget.child,
-      ),
+      child: Padding(padding: widget.padding, child: widget.child),
     );
   }
 
-  /// 兜底渲染：BackdropFilter 模糊 + 半透明 + 边框高光（全 API 兼容）。
+  /// 兜底：BackdropFilter 模糊 + 半透明边框（全 API 兼容）。
   Widget _buildFallback() {
     return ClipRRect(
       borderRadius: BorderRadius.circular(widget.cornerRadius),
       child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.12),
+            color: Colors.white.withOpacity(0.10),
             borderRadius: BorderRadius.circular(widget.cornerRadius),
             border: Border.all(
-              color: widget.borderColor ?? Colors.white.withOpacity(0.35),
+              color: widget.borderColor ?? Colors.white.withOpacity(0.4),
               width: 1.2,
             ),
           ),
@@ -208,6 +199,8 @@ class _GlassPainter extends CustomPainter {
     required this.refractionAmount,
     required this.touchPos,
     required this.time,
+    required this.glassOrigin,
+    required this.bgSize,
   });
 
   final ui.Image background;
@@ -217,19 +210,20 @@ class _GlassPainter extends CustomPainter {
   final double refractionAmount;
   final Offset touchPos;
   final double time;
+  final Offset glassOrigin;
+  final Size bgSize;
 
   @override
   void paint(Canvas canvas, Size size) {
     final shader = GlassShaderProgram.instance.createGlassShader();
 
-    // Float uniforms（按着色器声明顺序）
     shader
       ..setFloat(0, size.width)
       ..setFloat(1, size.height)
-      ..setFloat(2, size.width / 2)   // glassCenter X
-      ..setFloat(3, size.height / 2)  // glassCenter Y
-      ..setFloat(4, size.width / 2)   // halfSize X
-      ..setFloat(5, size.height / 2)  // halfSize Y
+      ..setFloat(2, size.width / 2)
+      ..setFloat(3, size.height / 2)
+      ..setFloat(4, size.width / 2)
+      ..setFloat(5, size.height / 2)
       ..setFloat(6, cornerRadius)
       ..setFloat(7, refractionHeight)
       ..setFloat(8, refractionAmount)
@@ -237,10 +231,13 @@ class _GlassPainter extends CustomPainter {
       ..setFloat(10, touchPos.dy)
       ..setFloat(11, time)
       ..setFloat(12, quality.shaderValue.toDouble())
+      ..setFloat(13, glassOrigin.dx)
+      ..setFloat(14, glassOrigin.dy)
+      ..setFloat(15, bgSize.width)
+      ..setFloat(16, bgSize.height)
       ..setImageSampler(0, background);
 
     final rect = Offset.zero & size;
-    // 圆角裁剪，避免着色器外部区域露出
     final rrect = RRect.fromRectAndRadius(rect, Radius.circular(cornerRadius));
     canvas.save();
     canvas.clipRRect(rrect);
@@ -252,6 +249,7 @@ class _GlassPainter extends CustomPainter {
   bool shouldRepaint(covariant _GlassPainter old) =>
       old.background != background ||
       old.touchPos != touchPos ||
-      old.time != time ||
-      old.quality != quality;
+      old.quality != quality ||
+      old.glassOrigin != glassOrigin ||
+      old.bgSize != bgSize;
 }
